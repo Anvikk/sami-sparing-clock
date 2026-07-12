@@ -1,1 +1,347 @@
-HTT42
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Sami Sparring Clock</title>
+<style>
+  :root {
+    --bg: #111418; --panel: #1b1f26; --active: #2ba84a; --active-glow: #2ba84a55;
+    --inactive: #262b33; --text: #f2f2f2; --dim: #8a8f98; --accent: #4a9eff; --danger: #e04b4b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overscroll-behavior:none; user-select:none; }
+  #app { height:100%; display:flex; flex-direction:column; }
+
+  .screen { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; gap:16px; }
+  .screen h1 { font-size:22px; margin:0 0 8px; text-align:center; }
+  .screen p.sub { color:var(--dim); margin:-8px 0 8px; text-align:center; font-size:14px; }
+  .card { background:var(--panel); border-radius:16px; padding:20px; width:100%; max-width:380px; display:flex; flex-direction:column; gap:14px; }
+  label { font-size:13px; color:var(--dim); }
+  input { width:100%; padding:12px; border-radius:10px; border:1px solid #333a45; background:#0f1216; color:var(--text); font-size:16px; margin-top:4px; }
+  button { padding:14px; border-radius:10px; border:none; font-size:16px; font-weight:600; cursor:pointer; background:var(--accent); color:#fff; }
+  button.secondary { background:var(--inactive); color:var(--text); }
+  button.ghost { background:transparent; border:1px solid #333a45; color:var(--dim); }
+  .rolegrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .rolegrid button { padding:20px 10px; font-size:15px; }
+  .rolegrid button.sami { background:var(--accent); }
+  .rolegrid button.opponent { background:var(--inactive); color:var(--text); }
+  .hint { font-size:12px; color:var(--dim); text-align:center; }
+  .tc { text-align:center; font-size:14px; color:var(--dim); }
+  .tc b { color:var(--text); }
+
+  #clockScreen { display:none; flex:1; flex-direction:column; }
+  .topbar { display:flex; align-items:center; justify-content:center; gap:12px; padding:10px; background:#0f1216; font-size:12px; color:var(--dim); flex-wrap:wrap; }
+  .topbar button { padding:8px 14px; font-size:13px; }
+  .clockwrap { flex:1; display:flex; flex-direction:row; }
+  .clockhalf { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--inactive); transition:background .15s; padding:10px; }
+  .clockhalf.active { background:var(--active); box-shadow:inset 0 0 60px var(--active-glow); }
+  .clockhalf.flagged { background:var(--danger); }
+  .clockhalf .name { font-size:16px; color:rgba(255,255,255,.7); text-transform:uppercase; letter-spacing:2px; margin-bottom:6px; font-weight:700; }
+  .clockhalf .color { font-size:12px; color:rgba(255,255,255,.5); margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+  .clockhalf .time { font-size:13vw; font-weight:700; font-variant-numeric:tabular-nums; line-height:1; }
+  .clockhalf .badge { font-size:12px; margin-top:10px; color:rgba(255,255,255,.8); text-align:center; padding:0 10px; }
+  .divider { width:2px; background:#0f1216; }
+  .startOverlay { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:center; justify-content:center; padding:24px; z-index:10; }
+  .startOverlay .box { background:var(--panel); border-radius:16px; padding:24px; text-align:center; max-width:340px; display:flex; flex-direction:column; gap:14px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- LANDING / ROLE SELECT -->
+  <div id="landingScreen" class="screen">
+    <h1>♟ Sami Sparring Clock</h1>
+    <div class="tc" id="tcDisplay">Loading time control…</div>
+    <div class="card">
+      <div class="rolegrid">
+        <button class="sami" id="btnSamiWhite">Sami<br>White</button>
+        <button class="sami" id="btnSamiBlack">Sami<br>Black</button>
+        <button class="opponent" id="btnOppWhite">Sparring<br>White</button>
+        <button class="opponent" id="btnOppBlack">Sparring<br>Black</button>
+      </div>
+      <p class="hint">Sami is always on the right, sparring partner always on the left, no matter the color.</p >
+    </div>
+    <button id="settingsToggle" class="ghost">Change Time Control</button>
+    <div class="card" id="settingsCard" style="display:none;">
+      <div>
+        <label>Minutes per side</label>
+        <input id="baseMinutes" type="number" value="15" min="1" max="180">
+      </div>
+      <div>
+        <label>Increment (seconds per move)</label>
+        <input id="incSeconds" type="number" value="10" min="0" max="60">
+      </div>
+      <button id="applySettingsBtn">Start New Game With These Settings</button>
+      <p class="hint">This resets the board for both sides.</p >
+    </div>
+  </div>
+
+  <!-- CLOCK SCREEN -->
+  <div id="clockScreen">
+    <div class="topbar">
+      <span id="statusLine">Waiting…</span>
+      <button id="resetBtn" class="ghost">New Game</button>
+    </div>
+    <div class="clockwrap">
+      <div class="clockhalf" id="opponentHalf">
+        <div class="name">SPARRING</div>
+        <div class="color" id="oppColorLabel"></div>
+        <div class="time" id="opponentTime">--:--</div>
+        <div class="badge" id="opponentBadge"></div>
+      </div>
+      <div class="divider"></div>
+      <div class="clockhalf" id="samiHalf">
+        <div class="name">SAMI</div>
+        <div class="color" id="samiColorLabel"></div>
+        <div class="time" id="samiTime">--:--</div>
+        <div class="badge" id="samiBadge"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- START OVERLAY: shown to the Black-color player until they start White's clock -->
+  <div id="startOverlay" class="startOverlay" style="display:none;">
+    <div class="box">
+      <h1 id="startTitle">Start the clock</h1>
+      <p class="sub" id="startSub"></p >
+      <button id="startClockBtn">Start Clock</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyB6KHm6FFSqhhJmtjE5RMMuUSfTikyzSF8",
+  authDomain: "sami-sparing-clock.firebaseapp.com",
+  databaseURL: "https://sami-sparing-clock-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "sami-sparing-clock",
+  storageBucket: "sami-sparing-clock.firebasestorage.app",
+  messagingSenderId: "1015963269728",
+  appId: "1:1015963269728:web:3968cdbe8ecfc0d2b92105"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const roomRef = db.ref('clockRooms/main'); // single fixed room, no codes needed
+
+let myRole = null;   // 'sami' | 'opponent'
+let serverOffset = 0;
+let gameState = null;
+let tickHandle = null;
+let audioCtx = null;
+
+function fmt(ms) {
+  if (ms < 0) ms = 0;
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  const tenths = Math.floor((ms % 1000) / 100);
+  if (totalSec < 20) return `${m}:${String(s).padStart(2,'0')}.${tenths}`;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+function beep(freq=880, dur=120) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = freq; o.connect(g); g.connect(audioCtx.destination);
+    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    o.start(); o.stop(audioCtx.currentTime + dur/1000);
+  } catch(e) {}
+}
+db.ref('.info/serverTimeOffset').on('value', s => { serverOffset = s.val() || 0; });
+function nowServer() { return Date.now() + serverOffset; }
+
+const DEFAULT_MIN = 15, DEFAULT_INC = 10;
+
+function freshState(baseMin, incSec) {
+  const baseMs = baseMin * 60000, incMs = incSec * 1000;
+  return {
+    baseTime: baseMs, increment: incMs,
+    samiColor: null, opponentColor: null,
+    samiTime: baseMs, opponentTime: baseMs,
+    turn: null, turnStartedAt: null, running: false,
+    gameStarted: false, flagged: null
+  };
+}
+
+// initialize room if it doesn't exist yet
+roomRef.get().then(snap => {
+  if (!snap.exists()) roomRef.set(freshState(DEFAULT_MIN, DEFAULT_INC));
+});
+
+const landingScreen = document.getElementById('landingScreen');
+const clockScreen = document.getElementById('clockScreen');
+const startOverlay = document.getElementById('startOverlay');
+
+function showLanding() { landingScreen.style.display='flex'; clockScreen.style.display='none'; startOverlay.style.display='none'; }
+function showClock() { landingScreen.style.display='none'; clockScreen.style.display='flex'; }
+
+document.getElementById('settingsToggle').onclick = () => {
+  const el = document.getElementById('settingsCard');
+  el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+};
+
+document.getElementById('applySettingsBtn').onclick = () => {
+  const baseMin = parseFloat(document.getElementById('baseMinutes').value) || DEFAULT_MIN;
+  const incSec = parseFloat(document.getElementById('incSeconds').value) || 0;
+  roomRef.set(freshState(baseMin, incSec));
+  document.getElementById('settingsCard').style.display = 'none';
+};
+
+document.getElementById('btnSamiWhite').onclick = () => pickRole('sami', 'white');
+document.getElementById('btnSamiBlack').onclick = () => pickRole('sami', 'black');
+document.getElementById('btnOppWhite').onclick = () => pickRole('opponent', 'white');
+document.getElementById('btnOppBlack').onclick = () => pickRole('opponent', 'black');
+
+function pickRole(role, color) {
+  myRole = role;
+  const updates = {};
+  updates[role + 'Color'] = color;
+  // auto-assign the other side the complementary color if not already set differently
+  const other = role === 'sami' ? 'opponent' : 'sami';
+  const otherColor = color === 'white' ? 'black' : 'white';
+  if (!gameState || !gameState[other + 'Color']) updates[other + 'Color'] = otherColor;
+  roomRef.update(updates);
+  showClock();
+}
+
+document.getElementById('resetBtn').onclick = () => {
+  if (!confirm('Start a new game? This resets both clocks and colors.')) return;
+  const baseMin = (gameState.baseTime || DEFAULT_MIN*60000) / 60000;
+  const incSec = (gameState.increment || DEFAULT_INC*1000) / 1000;
+  roomRef.set(freshState(baseMin, incSec));
+  myRole = null;
+  showLanding();
+};
+
+roomRef.on('value', snap => {
+  gameState = snap.val();
+  if (!gameState) return;
+  document.getElementById('tcDisplay').innerHTML =
+    `Current: <b>${gameState.baseTime/60000}+${gameState.increment/1000}</b>`;
+  render();
+});
+
+document.getElementById('opponentHalf').onclick = () => handleTap('opponent');
+document.getElementById('samiHalf').onclick = () => handleTap('sami');
+document.getElementById('startClockBtn').onclick = startGame;
+
+function blackRole() {
+  if (!gameState) return null;
+  if (gameState.samiColor === 'black') return 'sami';
+  if (gameState.opponentColor === 'black') return 'opponent';
+  return null;
+}
+function whiteRole() {
+  if (!gameState) return null;
+  if (gameState.samiColor === 'white') return 'sami';
+  if (gameState.opponentColor === 'white') return 'opponent';
+  return null;
+}
+
+function startGame() {
+  const wRole = whiteRole();
+  if (!wRole) return;
+  roomRef.update({
+    turn: wRole,
+    turnStartedAt: firebase.database.ServerValue.TIMESTAMP,
+    running: true,
+    gameStarted: true
+  });
+}
+
+function handleTap(role) {
+  if (!gameState || !myRole || myRole !== role) return;
+  if (!gameState.gameStarted || gameState.flagged) return;
+  if (gameState.turn !== role) return;
+
+  const now = nowServer();
+  const started = gameState.turnStartedAt || now;
+  const elapsed = now - started;
+  const key = role + 'Time';
+  let newTime = gameState[key] - elapsed + gameState.increment;
+  const nextTurn = role === 'sami' ? 'opponent' : 'sami';
+
+  if (newTime <= 0) {
+    roomRef.update({ [key]: 0, running: false, flagged: role });
+    return;
+  }
+  roomRef.update({
+    [key]: newTime, turn: nextTurn,
+    turnStartedAt: firebase.database.ServerValue.TIMESTAMP, running: true
+  });
+}
+
+function startTicker() { if (!tickHandle) tickHandle = setInterval(render, 100); }
+startTicker();
+
+let lastLowSami = false, lastLowOpp = false;
+
+function render() {
+  if (!gameState) return;
+
+  // if this device hasn't picked a role yet this session, stay on landing
+  if (!myRole) { showLanding(); return; }
+  showClock();
+
+  const now = nowServer();
+  let samiRemaining = gameState.samiTime, oppRemaining = gameState.opponentTime;
+  if (gameState.running && gameState.turnStartedAt) {
+    const elapsed = now - gameState.turnStartedAt;
+    if (gameState.turn === 'sami') samiRemaining -= elapsed; else oppRemaining -= elapsed;
+  }
+  samiRemaining = Math.max(0, samiRemaining);
+  oppRemaining = Math.max(0, oppRemaining);
+
+  document.getElementById('samiTime').textContent = fmt(samiRemaining);
+  document.getElementById('opponentTime').textContent = fmt(oppRemaining);
+  document.getElementById('samiColorLabel').textContent = gameState.samiColor || '';
+  document.getElementById('oppColorLabel').textContent = gameState.opponentColor || '';
+
+  const samiHalf = document.getElementById('samiHalf');
+  const oppHalf = document.getElementById('opponentHalf');
+  samiHalf.classList.toggle('active', gameState.running && gameState.turn==='sami' && !gameState.flagged);
+  oppHalf.classList.toggle('active', gameState.running && gameState.turn==='opponent' && !gameState.flagged);
+  samiHalf.classList.toggle('flagged', gameState.flagged==='sami');
+  oppHalf.classList.toggle('flagged', gameState.flagged==='opponent');
+
+  document.getElementById('samiBadge').textContent = gameState.flagged==='sami' ? 'FLAGGED — TIME OUT' : (myRole==='sami' && gameState.gameStarted ? 'Tap after you move' : '');
+  document.getElementById('opponentBadge').textContent = gameState.flagged==='opponent' ? 'FLAGGED — TIME OUT' : (myRole==='opponent' && gameState.gameStarted ? 'Tap after you move' : '');
+
+  // status line + start overlay
+  const statusLine = document.getElementById('statusLine');
+  if (!gameState.samiColor || !gameState.opponentColor) {
+    statusLine.textContent = 'Waiting for other side to join…';
+  } else if (!gameState.gameStarted) {
+    const bRole = blackRole();
+    statusLine.textContent = `Waiting for ${bRole === 'sami' ? 'Sami' : 'Sparring partner'} (Black) to start the clock`;
+  } else {
+    statusLine.textContent = `${gameState.turn === 'sami' ? 'Sami' : 'Sparring'} to move`;
+  }
+
+  if (gameState.samiColor && gameState.opponentColor && !gameState.gameStarted && blackRole() === myRole) {
+    startOverlay.style.display = 'flex';
+    document.getElementById('startTitle').textContent = "You're Black — start White's clock";
+    document.getElementById('startSub').textContent =
+      `${whiteRole()==='sami' ? 'Sami' : 'Sparring partner'} plays White and moves first. Tap below once you're both ready.`;
+  } else {
+    startOverlay.style.display = 'none';
+  }
+
+  if (gameState.running) {
+    if (samiRemaining < 10000 && samiRemaining > 0 && !lastLowSami) { beep(660); lastLowSami = true; }
+    if (samiRemaining >= 10000) lastLowSami = false;
+    if (oppRemaining < 10000 && oppRemaining > 0 && !lastLowOpp) { beep(660); lastLowOpp = true; }
+    if (oppRemaining >= 10000) lastLowOpp = false;
+  }
+  if (gameState.flagged) beep(220, 400);
+}
+
+showLanding();
+</script>
+</body>
+</html>
