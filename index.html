@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Remote Chess Clock</title>
+<style>
+  :root {
+    --bg: #111418;
+    --panel: #1b1f26;
+    --active: #2ba84a;
+    --active-glow: #2ba84a55;
+    --inactive: #262b33;
+    --text: #f2f2f2;
+    --dim: #8a8f98;
+    --accent: #4a9eff;
+    --danger: #e04b4b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior: none; user-select: none;
+  }
+  #app { height: 100%; display: flex; flex-direction: column; }
+
+  /* ---------- Setup / Join screens ---------- */
+  .screen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; gap: 16px; }
+  .screen h1 { font-size: 22px; margin: 0 0 8px; }
+  .screen p.sub { color: var(--dim); margin: -8px 0 8px; text-align: center; font-size: 14px; }
+  .card { background: var(--panel); border-radius: 16px; padding: 20px; width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px; }
+  label { font-size: 13px; color: var(--dim); }
+  input, select {
+    width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #333a45;
+    background: #0f1216; color: var(--text); font-size: 16px; margin-top: 4px;
+  }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  button {
+    padding: 14px; border-radius: 10px; border: none; font-size: 16px; font-weight: 600;
+    cursor: pointer; background: var(--accent); color: #fff;
+  }
+  button.secondary { background: var(--inactive); color: var(--text); }
+  button.ghost { background: transparent; border: 1px solid #333a45; color: var(--dim); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .colorpick { display: flex; gap: 10px; }
+  .colorpick button { flex: 1; padding: 16px; }
+  .colorpick button.chosen { outline: 3px solid var(--accent); }
+  .roomcode { font-size: 28px; letter-spacing: 4px; text-align: center; font-weight: 700; background: #0f1216; padding: 12px; border-radius: 10px; }
+  .hint { font-size: 12px; color: var(--dim); text-align: center; }
+
+  /* ---------- Clock screen ---------- */
+  #clockScreen { display: none; flex: 1; flex-direction: column; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; font-size: 12px; color: var(--dim); }
+  .topbar .room { letter-spacing: 2px; }
+  .clockwrap { flex: 1; display: flex; flex-direction: column; }
+  .clockhalf {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--inactive); transition: background 0.15s; position: relative;
+  }
+  .clockhalf.active { background: var(--active); box-shadow: inset 0 0 60px var(--active-glow); }
+  .clockhalf.flagged { background: var(--danger); }
+  .clockhalf .name { font-size: 14px; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; }
+  .clockhalf .time { font-size: 15vw; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .clockhalf .badge { font-size: 12px; margin-top: 8px; color: rgba(255,255,255,0.75); }
+  .clockhalf.top { transform: rotate(180deg); }
+  .midbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px; background: #0f1216; }
+  .midbar button { padding: 8px 14px; font-size: 13px; }
+  .spectatorNote { text-align: center; font-size: 12px; color: var(--dim); padding: 6px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- SETUP SCREEN -->
+  <div id="setupScreen" class="screen">
+    <h1>♟ Remote Chess Clock</h1>
+    <p class="sub">Create a room, share the code, each side controls only their own clock.</p>
+    <div class="card">
+      <div>
+        <label>Minutes per side</label>
+        <input id="baseMinutes" type="number" value="15" min="1" max="180">
+      </div>
+      <div>
+        <label>Increment (seconds per move)</label>
+        <input id="incSeconds" type="number" value="10" min="0" max="60">
+      </div>
+      <button id="createBtn">Create Room</button>
+    </div>
+    <div class="card">
+      <label>Join existing room</label>
+      <input id="joinCode" type="text" placeholder="Room code" maxlength="5" style="text-transform:uppercase">
+      <button id="joinBtn" class="secondary">Join Room</button>
+    </div>
+    <p class="hint">Coach or spectators can join and just watch, no color needed.</p>
+  </div>
+
+  <!-- COLOR PICK SCREEN -->
+  <div id="colorScreen" class="screen" style="display:none;">
+    <h1>Room <span id="roomCodeLabel"></span></h1>
+    <p class="sub">Pick your side, or watch as spectator.</p>
+    <div class="card">
+      <div class="colorpick">
+        <button id="pickWhite" class="secondary">Play White</button>
+        <button id="pickBlack" class="secondary">Play Black</button>
+      </div>
+      <button id="pickSpectate" class="ghost">Just Watch</button>
+    </div>
+  </div>
+
+  <!-- CLOCK SCREEN -->
+  <div id="clockScreen">
+    <div class="clockhalf top" id="topHalf">
+      <div class="name" id="topName">BLACK</div>
+      <div class="time" id="topTime">15:00</div>
+      <div class="badge" id="topBadge"></div>
+    </div>
+    <div class="midbar">
+      <div class="room">Room <b id="roomCodeSmall"></b></div>
+      <button id="pauseBtn" class="ghost">Pause</button>
+      <button id="resetBtn" class="ghost">Reset</button>
+    </div>
+    <div class="clockhalf" id="bottomHalf">
+      <div class="name" id="bottomName">WHITE</div>
+      <div class="time" id="bottomTime">15:00</div>
+      <div class="badge" id="bottomBadge"></div>
+    </div>
+    <div class="spectatorNote" id="spectatorNote" style="display:none;">Spectator view — read only</div>
+  </div>
+
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
+/* =========================================================
+   FIREBASE CONFIG — paste your project's config object here.
+   Get it from: Firebase Console > Project Settings > General
+   > Your apps > SDK setup and configuration
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyB6KHm6FFSqhhJmtjE5RMMuUSfTikyzSF8",
+  authDomain: "sami-sparing-clock.firebaseapp.com",
+  databaseURL: "https://sami-sparing-clock-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "sami-sparing-clock",
+  storageBucket: "sami-sparing-clock.firebasestorage.app",
+  messagingSenderId: "1015963269728",
+  appId: "1:1015963269728:web:3968cdbe8ecfc0d2b92105"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// ---------- State ----------
+let roomId = null;
+let myColor = null; // 'white' | 'black' | null (spectator)
+let roomRef = null;
+let serverOffset = 0;
+let gameState = null;
+let tickHandle = null;
+let audioCtx = null;
+
+// ---------- Helpers ----------
+function fmt(ms) {
+  if (ms < 0) ms = 0;
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  const tenths = Math.floor((ms % 1000) / 100);
+  if (totalSec < 20) return `${m}:${String(s).padStart(2,'0')}.${tenths}`;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+function genRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 5; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+function beep(freq = 880, dur = 120) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.frequency.value = freq;
+    o.connect(g); g.connect(audioCtx.destination);
+    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    o.start();
+    o.stop(audioCtx.currentTime + dur / 1000);
+  } catch (e) {}
+}
+
+// ---------- Server time offset ----------
+db.ref('.info/serverTimeOffset').on('value', snap => {
+  serverOffset = snap.val() || 0;
+});
+function nowServer() { return Date.now() + serverOffset; }
+
+// ---------- Screens ----------
+const setupScreen = document.getElementById('setupScreen');
+const colorScreen = document.getElementById('colorScreen');
+const clockScreen = document.getElementById('clockScreen');
+
+function showScreen(el) {
+  [setupScreen, colorScreen].forEach(s => s.style.display = 'none');
+  clockScreen.style.display = 'none';
+  el.style.display = (el === clockScreen) ? 'flex' : 'flex';
+}
+
+// ---------- Create room ----------
+document.getElementById('createBtn').onclick = async () => {
+  const baseMin = parseFloat(document.getElementById('baseMinutes').value) || 15;
+  const incSec = parseFloat(document.getElementById('incSeconds').value) || 0;
+  const code = genRoomCode();
+  const baseMs = baseMin * 60 * 1000;
+  const incMs = incSec * 1000;
+
+  roomId = code;
+  roomRef = db.ref('clockRooms/' + roomId);
+  await roomRef.set({
+    baseTime: baseMs,
+    increment: incMs,
+    whiteTime: baseMs,
+    blackTime: baseMs,
+    turn: 'white',
+    turnStartedAt: null, // null = not started yet
+    running: false,
+    flagged: null,
+    createdAt: firebase.database.ServerValue.TIMESTAMP
+  });
+
+  document.getElementById('roomCodeLabel').textContent = roomId;
+  showScreen(colorScreen);
+};
+
+// ---------- Join room ----------
+document.getElementById('joinBtn').onclick = () => {
+  const code = document.getElementById('joinCode').value.trim().toUpperCase();
+  if (!code) return;
+  roomId = code;
+  roomRef = db.ref('clockRooms/' + roomId);
+  roomRef.get().then(snap => {
+    if (!snap.exists()) {
+      alert('Room not found. Check the code.');
+      return;
+    }
+    document.getElementById('roomCodeLabel').textContent = roomId;
+    showScreen(colorScreen);
+  });
+};
+
+// ---------- Color pick ----------
+document.getElementById('pickWhite').onclick = () => choosePlay('white');
+document.getElementById('pickBlack').onclick = () => choosePlay('black');
+document.getElementById('pickSpectate').onclick = () => enterClock();
+
+function choosePlay(color) {
+  myColor = color;
+  enterClock();
+}
+
+// ---------- Enter clock screen ----------
+function enterClock() {
+  document.getElementById('roomCodeSmall').textContent = roomId;
+  document.getElementById('spectatorNote').style.display = myColor ? 'none' : 'block';
+  showScreen(clockScreen);
+  attachRoomListener();
+  startTicker();
+}
+
+// ---------- Room listener ----------
+function attachRoomListener() {
+  roomRef.on('value', snap => {
+    gameState = snap.val();
+    render();
+  });
+}
+
+// ---------- Move button logic (tap your own half to end your turn) ----------
+function attachTapHandlers() {
+  document.getElementById('topHalf').onclick = () => handleTap('black');
+  document.getElementById('bottomHalf').onclick = () => handleTap('white');
+}
+attachTapHandlers();
+
+function handleTap(color) {
+  if (!gameState || !myColor) return; // spectators can't tap
+  if (myColor !== color) return; // can only tap your own half
+  if (gameState.flagged) return;
+  if (gameState.turn !== color) return; // not your turn to move-and-pass
+
+  const now = nowServer();
+  const started = gameState.turnStartedAt || now;
+  const elapsed = gameState.running === false && !gameState.turnStartedAt ? 0 : (now - started);
+  const frozenKey = color + 'Time';
+  let newTime = gameState[frozenKey] - elapsed + gameState.increment;
+  const nextTurn = color === 'white' ? 'black' : 'white';
+
+  if (newTime <= 0) {
+    roomRef.update({
+      [frozenKey]: 0,
+      running: false,
+      flagged: color
+    });
+    return;
+  }
+
+  roomRef.update({
+    [frozenKey]: newTime,
+    turn: nextTurn,
+    turnStartedAt: firebase.database.ServerValue.TIMESTAMP,
+    running: true
+  });
+}
+
+// ---------- Pause / Reset ----------
+document.getElementById('pauseBtn').onclick = () => {
+  if (!gameState) return;
+  if (gameState.running) {
+    // freeze current turn's clock at current remaining
+    const now = nowServer();
+    const started = gameState.turnStartedAt || now;
+    const elapsed = now - started;
+    const key = gameState.turn + 'Time';
+    const remaining = Math.max(0, gameState[key] - elapsed);
+    roomRef.update({ [key]: remaining, running: false, turnStartedAt: null });
+  } else {
+    roomRef.update({ running: true, turnStartedAt: firebase.database.ServerValue.TIMESTAMP });
+  }
+};
+
+document.getElementById('resetBtn').onclick = () => {
+  if (!gameState) return;
+  if (!confirm('Reset the clock for both sides?')) return;
+  roomRef.update({
+    whiteTime: gameState.baseTime,
+    blackTime: gameState.baseTime,
+    turn: 'white',
+    turnStartedAt: null,
+    running: false,
+    flagged: null
+  });
+};
+
+// ---------- Render loop ----------
+function startTicker() {
+  if (tickHandle) return;
+  tickHandle = setInterval(render, 100);
+}
+
+let lastLowBeepWhite = false, lastLowBeepBlack = false;
+
+function render() {
+  if (!gameState) return;
+  const now = nowServer();
+  let whiteRemaining = gameState.whiteTime;
+  let blackRemaining = gameState.blackTime;
+
+  if (gameState.running && gameState.turnStartedAt) {
+    const elapsed = now - gameState.turnStartedAt;
+    if (gameState.turn === 'white') whiteRemaining = gameState.whiteTime - elapsed;
+    else blackRemaining = gameState.blackTime - elapsed;
+  }
+
+  whiteRemaining = Math.max(0, whiteRemaining);
+  blackRemaining = Math.max(0, blackRemaining);
+
+  document.getElementById('bottomTime').textContent = fmt(whiteRemaining);
+  document.getElementById('topTime').textContent = fmt(blackRemaining);
+  document.getElementById('bottomName').textContent = 'WHITE' + (myColor === 'white' ? ' (you)' : '');
+  document.getElementById('topName').textContent = 'BLACK' + (myColor === 'black' ? ' (you)' : '');
+
+  const topHalf = document.getElementById('topHalf');
+  const bottomHalf = document.getElementById('bottomHalf');
+  topHalf.classList.toggle('active', gameState.running && gameState.turn === 'black' && !gameState.flagged);
+  bottomHalf.classList.toggle('active', gameState.running && gameState.turn === 'white' && !gameState.flagged);
+  topHalf.classList.toggle('flagged', gameState.flagged === 'black');
+  bottomHalf.classList.toggle('flagged', gameState.flagged === 'white');
+
+  document.getElementById('topBadge').textContent = gameState.flagged === 'black' ? 'FLAGGED — TIME OUT' : (myColor === 'black' ? 'Tap your half after you move' : '');
+  document.getElementById('bottomBadge').textContent = gameState.flagged === 'white' ? 'FLAGGED — TIME OUT' : (myColor === 'white' ? 'Tap your half after you move' : '');
+
+  // low time beep under 10s, once per crossing
+  if (gameState.running) {
+    if (whiteRemaining < 10000 && whiteRemaining > 0 && !lastLowBeepWhite) { beep(660); lastLowBeepWhite = true; }
+    if (whiteRemaining >= 10000) lastLowBeepWhite = false;
+    if (blackRemaining < 10000 && blackRemaining > 0 && !lastLowBeepBlack) { beep(660); lastLowBeepBlack = true; }
+    if (blackRemaining >= 10000) lastLowBeepBlack = false;
+  }
+  if (gameState.flagged) {
+    beep(220, 400);
+  }
+}
+
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  document.getElementById('pauseBtn').textContent = 'Pause/Resume';
+});
+</script>
+</body>
+</html>
