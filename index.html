@@ -38,7 +38,12 @@
   #clockScreen { display:none; flex:1; flex-direction:column; }
   .topbar { display:flex; align-items:center; justify-content:center; gap:12px; padding:10px; background:#0f1216; font-size:12px; color:var(--dim); flex-wrap:wrap; }
   .topbar button { padding:8px 14px; font-size:13px; }
-  .clockwrap { flex:1; display:flex; flex-direction:row; }
+  .clockwrap { flex:1; display:flex; flex-direction:row; position:relative; }
+  .pauseFab { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:5;
+    width:60px; height:60px; border-radius:50%; background:var(--panel); border:2px solid #333a45;
+    color:var(--text); font-size:22px; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 2px 14px rgba(0,0,0,.5); padding:0; }
+  .pauseFab.resume { background:var(--accent); border-color:var(--accent); }
   .clockhalf { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--inactive); transition:background .15s; padding:10px; }
   .clockhalf.active { background:var(--active); box-shadow:inset 0 0 60px var(--active-glow); }
   .clockhalf.flagged { background:var(--danger); }
@@ -90,7 +95,6 @@
   <div id="clockScreen">
     <div class="topbar">
       <span id="statusLine">Waiting…</span>
-      <button id="pauseBtn" class="ghost">Pause</button>
       <button id="resetBtn" class="ghost">New Game</button>
     </div>
     <div class="clockwrap">
@@ -107,6 +111,7 @@
         <div class="time" id="samiTime">--:--</div>
         <div class="badge" id="samiBadge"></div>
       </div>
+      <button id="pauseBtn" class="pauseFab" title="Pause">⏸</button>
     </div>
   </div>
 
@@ -365,8 +370,10 @@ function render() {
   if (!gameState.gameStarted || gameState.flagged) {
     pauseBtn.style.display = 'none';
   } else {
-    pauseBtn.style.display = '';
-    pauseBtn.textContent = gameState.paused ? 'Resume' : 'Pause';
+    pauseBtn.style.display = 'flex';
+    pauseBtn.textContent = gameState.paused ? '▶' : '⏸';
+    pauseBtn.classList.toggle('resume', !!gameState.paused);
+    pauseBtn.title = gameState.paused ? 'Resume' : 'Pause';
   }
 
   document.getElementById('samiBadge').textContent = gameState.flagged==='sami' ? 'FLAGGED — TIME OUT' : (myRole==='sami' && gameState.gameStarted ? 'Tap after you move' : '');
