@@ -27,6 +27,10 @@
   .rolegrid button { padding:20px 10px; font-size:15px; }
   .rolegrid button.sami { background:var(--accent); }
   .rolegrid button.opponent { background:var(--inactive); color:var(--text); }
+  .presetgrid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .presetgrid button { padding:12px 6px; font-size:13px; background:var(--inactive); color:var(--text); }
+  .presetgrid button.active { background:var(--accent); }
+  .clockhalf.paused { opacity:0.55; }
   .hint { font-size:12px; color:var(--dim); text-align:center; }
   .tc { text-align:center; font-size:14px; color:var(--dim); }
   .tc b { color:var(--text); }
@@ -66,6 +70,10 @@
     <button id="settingsToggle" class="ghost">Change Time Control</button>
     <div class="card" id="settingsCard" style="display:none;">
       <div>
+        <label>Quick presets</label>
+        <div class="presetgrid" id="presetGrid"></div>
+      </div>
+      <div>
         <label>Minutes per side</label>
         <input id="baseMinutes" type="number" value="15" min="1" max="180">
       </div>
@@ -82,6 +90,7 @@
   <div id="clockScreen">
     <div class="topbar">
       <span id="statusLine">Waiting…</span>
+      <button id="pauseBtn" class="ghost">Pause</button>
       <button id="resetBtn" class="ghost">New Game</button>
     </div>
     <div class="clockwrap">
@@ -164,9 +173,20 @@ function freshState(baseMin, incSec) {
     samiColor: null, opponentColor: null,
     samiTime: baseMs, opponentTime: baseMs,
     turn: null, turnStartedAt: null, running: false,
-    gameStarted: false, flagged: null
+    gameStarted: false, flagged: null, paused: false
   };
 }
+
+const PRESETS = [
+  { label: '3+2', m: 3, i: 2 },
+  { label: '5+0', m: 5, i: 0 },
+  { label: '5+3', m: 5, i: 3 },
+  { label: '10+5', m: 10, i: 5 },
+  { label: '15+10', m: 15, i: 10 },
+  { label: '20+10', m: 20, i: 10 },
+  { label: '30+0', m: 30, i: 0 },
+  { label: '30+20', m: 30, i: 20 },
+];
 
 // initialize room if it doesn't exist yet
 roomRef.get().then(snap => {
@@ -191,6 +211,19 @@ document.getElementById('applySettingsBtn').onclick = () => {
   roomRef.set(freshState(baseMin, incSec));
   document.getElementById('settingsCard').style.display = 'none';
 };
+
+const presetGrid = document.getElementById('presetGrid');
+PRESETS.forEach(p => {
+  const btn = document.createElement('button');
+  btn.textContent = p.label;
+  btn.onclick = () => {
+    roomRef.set(freshState(p.m, p.i));
+    document.getElementById('baseMinutes').value = p.m;
+    document.getElementById('incSeconds').value = p.i;
+    document.getElementById('settingsCard').style.display = 'none';
+  };
+  presetGrid.appendChild(btn);
+});
 
 document.getElementById('btnSamiWhite').onclick = () => pickRole('sami', 'white');
 document.getElementById('btnSamiBlack').onclick = () => pickRole('sami', 'black');
@@ -229,6 +262,23 @@ roomRef.on('value', snap => {
 document.getElementById('opponentHalf').onclick = () => handleTap('opponent');
 document.getElementById('samiHalf').onclick = () => handleTap('sami');
 document.getElementById('startClockBtn').onclick = startGame;
+document.getElementById('pauseBtn').onclick = togglePause;
+
+function togglePause() {
+  if (!gameState || !gameState.gameStarted || gameState.flagged) return;
+  if (gameState.running) {
+    // Freeze the clock that's currently ticking and record paused state
+    const now = nowServer();
+    const started = gameState.turnStartedAt || now;
+    const elapsed = now - started;
+    const key = gameState.turn + 'Time';
+    const newTime = Math.max(0, gameState[key] - elapsed);
+    roomRef.update({ [key]: newTime, running: false, paused: true, turnStartedAt: null });
+  } else if (gameState.paused) {
+    // Resume: same side's turn continues from where it left off
+    roomRef.update({ running: true, paused: false, turnStartedAt: firebase.database.ServerValue.TIMESTAMP });
+  }
+}
 
 function blackRole() {
   if (!gameState) return null;
@@ -256,7 +306,7 @@ function startGame() {
 
 function handleTap(role) {
   if (!gameState || !myRole || myRole !== role) return;
-  if (!gameState.gameStarted || gameState.flagged) return;
+  if (!gameState.gameStarted || gameState.flagged || gameState.paused) return;
   if (gameState.turn !== role) return;
 
   const now = nowServer();
@@ -308,6 +358,16 @@ function render() {
   oppHalf.classList.toggle('active', gameState.running && gameState.turn==='opponent' && !gameState.flagged);
   samiHalf.classList.toggle('flagged', gameState.flagged==='sami');
   oppHalf.classList.toggle('flagged', gameState.flagged==='opponent');
+  samiHalf.classList.toggle('paused', !!gameState.paused);
+  oppHalf.classList.toggle('paused', !!gameState.paused);
+
+  const pauseBtn = document.getElementById('pauseBtn');
+  if (!gameState.gameStarted || gameState.flagged) {
+    pauseBtn.style.display = 'none';
+  } else {
+    pauseBtn.style.display = '';
+    pauseBtn.textContent = gameState.paused ? 'Resume' : 'Pause';
+  }
 
   document.getElementById('samiBadge').textContent = gameState.flagged==='sami' ? 'FLAGGED — TIME OUT' : (myRole==='sami' && gameState.gameStarted ? 'Tap after you move' : '');
   document.getElementById('opponentBadge').textContent = gameState.flagged==='opponent' ? 'FLAGGED — TIME OUT' : (myRole==='opponent' && gameState.gameStarted ? 'Tap after you move' : '');
@@ -319,6 +379,8 @@ function render() {
   } else if (!gameState.gameStarted) {
     const bRole = blackRole();
     statusLine.textContent = `Waiting for ${bRole === 'sami' ? 'Sami' : 'Sparring partner'} (Black) to start the clock`;
+  } else if (gameState.paused) {
+    statusLine.textContent = `⏸ Paused — ${gameState.turn === 'sami' ? 'Sami' : 'Sparring'} to move`;
   } else {
     statusLine.textContent = `${gameState.turn === 'sami' ? 'Sami' : 'Sparring'} to move`;
   }
